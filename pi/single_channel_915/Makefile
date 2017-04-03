@@ -2,7 +2,7 @@
 # Single Channel LoRaWAN Gateway
 
 CC=g++
-CFLAGS=-c -Wall
+CFLAGS=-c -Wall  -std=c++11
 LIBS=-lwiringPi
 
 all: single_chan_pkt_fwd
@@ -17,4 +17,4 @@ base64.o: base64.c
 	$(CC) $(CFLAGS) base64.c
 
 clean:
-	rm *.o single_chan_pkt_fwd	
+	rm *.o single_chan_pkt_fwd

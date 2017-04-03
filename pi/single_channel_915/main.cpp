@@ -20,6 +20,7 @@
 #include <sys/time.h>
 #include <cstring>
 
+
 #include <sys/ioctl.h>
 #include <net/if.h>
 
@@ -86,8 +87,8 @@ static char description[64] = "";                        /* used for free form d
 // define servers
 // TODO: use host names and dns
 #define SERVER1 "54.72.145.119"    // The Things Network: croft.thethings.girovito.nl
-//#define SERVER2 "192.168.1.10"      // local
-#define PORT 1700                   // The port on which to send data
+#define SERVER2 "192.168.0.12"      // local
+#define PORT 7000                 // The port on which to send data
 
 // #############################################
 // #############################################
@@ -315,10 +316,12 @@ void SetupLoRa()
 
 void sendudp(char *msg, int length) {
 
+  char var[11] = "helloworld";
+
 //send the update
 #ifdef SERVER1
     inet_aton(SERVER1 , &si_other.sin_addr);
-    if (sendto(s, (char *)msg, length, 0 , (struct sockaddr *) &si_other, slen)==-1)
+    if (sendto(s, var, length, 0 , (struct sockaddr *) &si_other, slen)==-1)
     {
         die("sendto()");
     }
@@ -411,7 +414,7 @@ void receivepacket() {
 
             int j;
             j = bin_to_b64((uint8_t *)message, receivedbytes, (char *)(b64), 341);
-            //fwrite(b64, sizeof(char), j, stdout);
+            fwrite(b64, sizeof(char), j, stdout);
 
             char buff_up[TX_BUFF_SIZE]; /* buffer to compose the upstream packet */
             int buff_index=0;

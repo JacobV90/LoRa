@@ -21,9 +21,79 @@
    *
    *******************************************************************************/
 
+#include <SPI.h>
 #include <lmic.h>
 #include <hal/hal.h>
-#include <SPI.h>
+#include <OneWire.h>
+
+#define VOLTAGE 5.00    //system voltage
+#define OFFSET 0        //zero drift voltage
+#define LED 13         //operating instructions
+
+#define ArrayLenth  40    //times of collection
+#define orpPin A0 
+#define phPin A1  
+#define turbPin A2
+#define tempPin A3
+
+double orpValue;
+int orpArray[ArrayLenth];
+int orpArrayIndex=0;
+
+double pHValue;
+double pHVoltage;
+int pHArray[ArrayLenth];  
+int pHArrayIndex=0;    
+
+double turbidity;
+double turbVoltage;
+double turbiditySensorValue;
+double vclear=2.85; //Value to be used for calibration(with clear water) - turbidity
+
+OneWire  ds(3);
+double tempSensorValue;
+double temp;
+
+double avergearray(int* arr, int number){
+  int i;
+  int max,min;
+  double avg;
+  long amount=0;
+  if(number<=0){
+    printf("Error number for the array to avraging!/n");
+    return 0;
+  }
+  if(number<5){   //less than 5, calculated directly statistics
+    for(i=0;i<number;i++){
+      amount+=arr[i];
+    }
+    avg = amount/number;
+    return avg;
+  }else{
+    if(arr[0]<arr[1]){
+      min = arr[0];max=arr[1];
+    }
+    else{
+      min=arr[1];max=arr[0];
+    }
+    for(i=2;i<number;i++){
+      if(arr[i]<min){
+        amount+=min;        //arr<min
+        min=arr[i];
+      }else {
+        if(arr[i]>max){
+          amount+=max;    //arr>max
+          max=arr[i];
+        }else{
+          amount+=arr[i]; //min<=arr<=max
+        }
+      }//if
+    }//for
+    avg = (double)amount/(number-2);
+  }//if
+  return avg;
+}
+
 
 // LoRaWAN NwkSKey, network session key
 // This is the default Semtech key, which is used by the prototype TTN
@@ -46,7 +116,7 @@ void os_getArtEui (u1_t* buf) { }
 void os_getDevEui (u1_t* buf) { }
 void os_getDevKey (u1_t* buf) { }
 
-static uint8_t mydata[] = "Hello, world!";
+static uint8_t mydata[255];
 static osjob_t sendjob;
 
 // Schedule TX every this many seconds (might become longer due to duty
@@ -142,6 +212,8 @@ void do_send(osjob_t* j){
 void setup() {
     Serial.begin(115200);
     Serial.println(F("Starting"));
+
+    pinMode(LED,OUTPUT);
     
 #ifdef VCC_ENABLE
     // For Pinoccio Scout boards
@@ -211,5 +283,150 @@ void setup() {
 }
 
 void loop() {
+  
     os_runloop_once();
+    
+    static unsigned long sensorTimer=millis();   //analog sampling interval
+    static unsigned long printTime=millis();
+    
+    if(millis() >= sensorTimer)
+    {
+      sensorTimer=millis()+20; //read an analog value every 20ms
+      
+      orpArray[orpArrayIndex++]=analogRead(orpPin); 
+      pHArray[pHArrayIndex++]=analogRead(phPin);
+      turbiditySensorValue = analogRead(turbPin);
+      
+      if (orpArrayIndex==ArrayLenth) {
+        orpArrayIndex=0;
+        pHArrayIndex=0;
+      }   
+
+      // ORP Value
+      orpValue=((30*(double)VOLTAGE*1000)-(75*avergearray(orpArray, ArrayLenth)*VOLTAGE*1000/1024))/75-OFFSET; 
+
+      // pH Value
+      pHVoltage = avergearray(pHArray, ArrayLenth)*5.0/1024;
+      pHValue = 3.5*pHVoltage+OFFSET;
+
+      // Turbidity Value
+      turbVoltage = turbiditySensorValue * (5.0 / 1024.0); // Convert the analog reading (which goes from 0 - 1023) to a voltage (0 - 5V)
+      turbidity = 100.0-(turbVoltage-vclear)*100.0; //calculating turbidity as relative percentage
+
+      temp = getTemp();
+
+      char valueStr[256];
+      char string[33];
+      
+      itoa(temp, string, 10);
+      strcpy(valueStr, string);
+      strcat(valueStr, ",");
+
+      itoa(orpValue, string, 10);
+      strcat(valueStr, string );
+      strcat(valueStr, ",");
+
+      itoa(pHValue, string, 10);
+      strcat(valueStr, string);
+      strcat(valueStr, ",");
+
+      itoa(turbidity, string, 10);
+      strcat(valueStr, string);
+      strcat(valueStr, "\0");
+
+      // add sensor values to data packet 
+      strcpy(mydata, valueStr);
+      Serial.print("My data: ");
+      Serial.print((char *)mydata);
+  
+    }
+    
+    if(millis() >= printTime)   //Every 800 milliseconds, print a numerical, convert the state of the LED indicator
+    {
+      printTime=millis()+800;
+      Serial.print("ORP: ");
+      Serial.print((int)orpValue);
+      Serial.println("mV");
+      Serial.print("pH value: ");
+      Serial.println(pHValue,2);
+      Serial.print("turbidity value: ");
+      Serial.println(turbidity,2);
+      digitalWrite(LED,1-digitalRead(LED));
+    }
+
+  
 }
+
+float getTemp() {
+  byte i;
+  byte present = 0;
+  byte type_s;
+  byte data[12];
+  byte addr[8];
+  float celsius, fahrenheit;
+    
+  if ( !ds.search(addr)) {
+    Serial.println("No more addresses.");
+    Serial.println();
+    ds.reset_search();
+    delay(250);
+    return;
+  }
+
+  if (OneWire::crc8(addr, 7) != addr[7]) {
+      Serial.println("CRC is not valid!");
+      return;
+  }
+
+  ds.reset();
+  ds.select(addr);
+  ds.write(0x44);        // start conversion, use ds.write(0x44,1) with parasite power on at the end
+
+  delay(1000);     // maybe 750ms is enough, maybe not
+  // we might do a ds.depower() here, but the reset will take care of it.
+
+  present = ds.reset();
+  ds.select(addr);    
+  ds.write(0xBE);         // Read Scratchpad
+
+  Serial.print("  Data = ");
+  Serial.print(present, HEX);
+  Serial.print(" ");
+  for ( i = 0; i < 9; i++) {           // we need 9 bytes
+    data[i] = ds.read();
+    Serial.print(data[i], HEX);
+    Serial.print(" ");
+  }
+  Serial.print(" CRC=");
+  Serial.print(OneWire::crc8(data, 8), HEX);
+  Serial.println();
+
+  // Convert the data to actual temperature
+  // because the result is a 16 bit signed integer, it should
+  // be stored to an "int16_t" type, which is always 16 bits
+  // even when compiled on a 32 bit processor.
+  int16_t raw = (data[1] << 8) | data[0];
+  if (type_s) {
+    raw = raw << 3; // 9 bit resolution default
+    if (data[7] == 0x10) {
+      // "count remain" gives full 12 bit resolution
+      raw = (raw & 0xFFF0) + 12 - data[6];
+    }
+  } else {
+    byte cfg = (data[4] & 0x60);
+    // at lower res, the low bits are undefined, so let's zero them
+    if (cfg == 0x00) raw = raw & ~7;  // 9 bit resolution, 93.75 ms
+    else if (cfg == 0x20) raw = raw & ~3; // 10 bit res, 187.5 ms
+    else if (cfg == 0x40) raw = raw & ~1; // 11 bit res, 375 ms
+    //// default is 12 bit resolution, 750 ms conversion time
+  }
+  
+  celsius = (float)raw / 16.0;
+  Serial.print("  Temperature = ");
+  Serial.print(celsius);
+  Serial.print(" Celsius, ");
+  Serial.println();
+
+  return celsius;
+}
+
